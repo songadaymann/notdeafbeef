@@ -1,0 +1,174 @@
+	.text
+	.align 2
+	.globl _hat_process
+
+// ------------------------------------------------------------
+// void hat_process(hat_t *h, float *L, float *R, uint32_t n)
+//   x0 = hat_t*
+//   x1 = L buffer
+//   x2 = R buffer
+//   w3 = n samples
+// ------------------------------------------------------------
+// Constants
+hat_f32_consts:
+    .float 120.0          // [0] decay rate
+    .float 0.15           // [4] amplitude
+
+// SplitMix64 constants (reuse from snare)
+hat_u64_consts:
+    .quad 0x9E3779B97F4A7C15   // GAMMA
+    .quad 0xBF58476D1CE4E5B9   // MUL1
+    .quad 0x94D049BB133111EB   // MUL2
+
+// float helpers
+hat_helpers:
+    .float 5.9604644775390625e-8  // 1/2^24
+    .float 2.0
+    .float 1.0
+
+_hat_process:
+    // Prologue
+    stp x29, x30, [sp, #-240]!
+    stp q8,  q9,  [sp, #112]
+    stp q10, q11, [sp, #144]
+    stp q12, q13, [sp, #176]
+    stp q14, q15, [sp, #208]
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+
+    // Save pointers
+    mov x19, x0      // hat*
+    mov x23, x1      // L*
+    mov x24, x2      // R*
+    mov w22, w3      // n
+
+    // Load struct members
+    ldr w20, [x19]        // pos
+    ldr w21, [x19, #4]    // len
+    ldr s8,  [x19, #8]    // sr
+
+    // rng pointer offset +12
+    add x25, x19, #12
+    ldr x26, [x25]        // rng.state
+
+    // Early outs
+    cmp w20, w21
+    b.ge Ldone
+    cbz w22, Ldone
+
+    // Load constants into callee-saved regs
+    adrp x27, hat_f32_consts@PAGE
+    add  x27, x27, hat_f32_consts@PAGEOFF
+    ldr  s9,  [x27]       // decay rate 120
+    ldr  s11, [x27, #4]   // amp 0.15
+    fneg s10, s9          // -decay_rate
+
+    adrp x28, hat_helpers@PAGE
+    add  x28, x28, hat_helpers@PAGEOFF
+    ldr  s12, [x28]       // inv24
+    ldr  s13, [x28, #4]   // 2.0
+    ldr  s14, [x28, #8]   // 1.0
+
+    // RNG consts pointer
+    adrp x27, hat_u64_consts@PAGE
+    add  x27, x27, hat_u64_consts@PAGEOFF
+
+    mov w28, wzr          // loop counter
+
+Lloop:
+    cmp w28, w22
+    b.ge Lend
+    cmp w20, w21
+    b.ge Lend
+
+    // t = pos / sr
+    ucvtf s0, w20
+    fdiv  s0, s0, s8
+
+    // env = expf(-decay_rate * t)
+    fmul s0, s10, s0
+    // Save registers before libm call
+    sub sp, sp, #64
+    stp x19, x20, [sp]
+    stp s8, s9, [sp, #8]
+    stp s10, s11, [sp, #16] 
+    stp s12, s13, [sp, #24]
+    stp s14, s15, [sp, #32]
+    stp s16, s17, [sp, #40]
+    stp s18, s19, [sp, #48]
+    stp s20, s21, [sp, #56]
+    bl   _expf
+    // Restore registers after libm call
+    ldp s20, s21, [sp, #56]
+    ldp s18, s19, [sp, #48]
+    ldp s16, s17, [sp, #40]
+    ldp s14, s15, [sp, #32]
+    ldp s12, s13, [sp, #24]
+    ldp s10, s11, [sp, #16]
+    ldp s8, s9, [sp, #8]
+    ldp x19, x20, [sp]
+    add sp, sp, #64
+    fmov s15, s0
+
+    // SplitMix64 RNG
+    ldr x3,  [x27]       // GAMMA
+    add x26, x26, x3
+    mov x4, x26
+    lsr x5, x4, #30
+    eor x4, x4, x5
+    ldr x5, [x27, #8]    // MUL1
+    mul x4, x4, x5
+    lsr x5, x4, #27
+    eor x4, x4, x5
+    ldr x5, [x27, #16]   // MUL2
+    mul x4, x4, x5
+    lsr x5, x4, #31
+    eor x4, x4, x5
+
+    // Convert to float [-1,1)
+    mov w5, w4
+    lsr w5, w5, #8
+    ucvtf s0, w5
+    fmul  s0, s0, s12
+    fmul  s0, s0, s13
+    fsub  s0, s0, s14
+
+    // sample = env * noise * amp
+    fmul s0, s0, s15
+    fmul s0, s0, s11
+
+    // Add to L and R
+    ldr s2, [x23, w28, sxtw #2]
+    fadd s2, s2, s0
+    str s2, [x23, w28, sxtw #2]
+
+    ldr s3, [x24, w28, sxtw #2]
+    fadd s3, s3, s0
+    str s3, [x24, w28, sxtw #2]
+
+    // Increment
+    add w20, w20, #1
+    add w28, w28, #1
+    b   Lloop
+
+Lend:
+    str w20, [x19]        // save pos
+    str x26, [x25]        // save rng.state
+
+Ldone:
+    // Epilogue
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp q14, q15, [sp, #208]
+    ldp q12, q13, [sp, #176]
+    ldp q10, q11, [sp, #144]
+    ldp q8,  q9,  [sp, #112]
+    ldp x29, x30, [sp], #240
+    ret 

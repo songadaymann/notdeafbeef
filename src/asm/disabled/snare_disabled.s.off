@@ -1,0 +1,182 @@
+	.text
+	.align 2
+	.globl _snare_process
+
+// ------------------------------------------------------------
+// void snare_process(snare_t *s, float *L, float *R, uint32_t n)
+//   x0 = snare_t*
+//   x1 = L buffer
+//   x2 = R buffer
+//   w3 = n samples
+// ------------------------------------------------------------
+// Constants
+snare_f32_consts:
+    .float 35.0          // [0] decay rate
+    .float 0.4           // [4] amplitude
+
+// SplitMix64 constants (same as noise.s)
+snare_u64_consts:
+    .quad 0x9E3779B97F4A7C15   // GAMMA
+    .quad 0xBF58476D1CE4E5B9   // MUL1
+    .quad 0x94D049BB133111EB   // MUL2
+
+// float helpers
+snare_helpers:
+    .float 5.9604644775390625e-8  // 1/2^24
+    .float 2.0
+    .float 1.0
+
+_snare_process:
+    // Prologue
+    stp x29, x30, [sp, #-240]!
+    stp q8,  q9,  [sp, #112]
+    stp q10, q11, [sp, #144]
+    stp q12, q13, [sp, #176]
+    stp q14, q15, [sp, #208]
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+
+    // Save important pointers in callee-saved registers
+    mov x19, x0      // snare*
+    mov x23, x1      // L*
+    mov x24, x2      // R*
+    mov w22, w3      // n in w22 (original n)
+
+    // Load struct members
+    ldr w20, [x19]        // pos (offset 0)
+    ldr w21, [x19, #4]    // len (offset 4)
+    ldr s8,  [x19, #8]    // sr  (offset 8)
+
+    // rng pointer is snare + 12 (state)
+    add x25, x19, #12     // &rng.state (struct offset 12)
+    ldr x26, [x25]        // rng state 64-bit
+
+    // Early outs
+    cmp w20, w21          // pos >= len ?
+    b.ge Ldone
+    cbz w22, Ldone        // n == 0
+
+    // Load constants once into callee-saved vector regs (v8-v11)
+    adrp x27, snare_f32_consts@PAGE
+    add  x27, x27, snare_f32_consts@PAGEOFF
+    ldr  s9,  [x27]       // decay rate 35
+    ldr  s11, [x27, #4]   // amp 0.4
+    fneg s10, s9          // -decay_rate in s10
+
+    // Load helper floats
+    adrp x28, snare_helpers@PAGE
+    add  x28, x28, snare_helpers@PAGEOFF
+    ldr  s12, [x28]       // inv24
+    ldr  s13, [x28, #4]   // 2.0
+    ldr  s14, [x28, #8]   // 1.0
+
+    // Load SplitMix64 consts ptr into x27 (temporarily)
+    adrp x27, snare_u64_consts@PAGE
+    add  x27, x27, snare_u64_consts@PAGEOFF  // x27 holds RNG consts pointer (callee-saved)
+
+    mov w28, wzr          // loop counter i in w28
+
+Lloop:
+    // Break if i>=n or pos>=len
+    cmp w28, w22
+    b.ge Lend
+    cmp w20, w21
+    b.ge Lend
+
+    // t = (float)pos / sr
+    ucvtf s0, w20
+    fdiv  s0, s0, s8     // s0 = t
+
+    // env = expf(-decay_rate * t)
+    fmul s0, s10, s0     // -decay_rate * t -> s0
+    // Save registers before libm call
+    sub sp, sp, #64
+    stp x19, x20, [sp]
+    stp s8, s9, [sp, #8]
+    stp s10, s11, [sp, #16] 
+    stp s12, s13, [sp, #24]
+    stp s14, s15, [sp, #32]
+    stp s16, s17, [sp, #40]
+    stp s18, s19, [sp, #48]
+    stp s20, s21, [sp, #56]
+    bl   _expf           // env in s0
+    // Restore registers after libm call
+    ldp s20, s21, [sp, #56]
+    ldp s18, s19, [sp, #48]
+    ldp s16, s17, [sp, #40]
+    ldp s14, s15, [sp, #32]
+    ldp s12, s13, [sp, #24]
+    ldp s10, s11, [sp, #16]
+    ldp s8, s9, [sp, #8]
+    ldp x19, x20, [sp]
+    add sp, sp, #64
+    fmov s15, s0         // preserve env in s15
+
+    // -------- SplitMix64 RNG --------
+    // state += GAMMA
+    ldr x3,  [x27]       // GAMMA
+    add x26, x26, x3
+    // tmp = state
+    mov x4, x26
+    // z ^= (z >> 30); z *= MUL1;
+    lsr x5, x4, #30
+    eor x4, x4, x5
+    ldr x5, [x27, #8]    // MUL1
+    mul x4, x4, x5
+    // z ^= (z >> 27); z *= MUL2;
+    lsr x5, x4, #27
+    eor x4, x4, x5
+    ldr x5, [x27, #16]   // MUL2
+    mul x4, x4, x5
+    // z ^= (z >> 31);
+    lsr x5, x4, #31
+    eor x4, x4, x5
+
+    // Convert to float in [-1,1)
+    mov w5, w4           // lower 32 bits
+    lsr w5, w5, #8       // 24-bit mantissa
+    ucvtf s0, w5         // to float
+    fmul  s0, s0, s12    // *inv24
+    fmul  s0, s0, s13    // *2
+    fsub  s0, s0, s14    // -1
+
+    // sample = env * noise * amp
+    fmul s0, s0, s15     // noise*env
+    fmul s0, s0, s11     // *amp
+
+    // Add to L and R
+    ldr s2, [x23, w28, sxtw #2]
+    fadd s2, s2, s0
+    str s2, [x23, w28, sxtw #2]
+
+    ldr s3, [x24, w28, sxtw #2]
+    fadd s3, s3, s0
+    str s3, [x24, w28, sxtw #2]
+
+    // Increment indices
+    add w20, w20, #1      // pos++
+    add w28, w28, #1      // i++
+    b   Lloop
+
+Lend:
+    // Store updated pos and rng state back
+    str w20, [x19]        // pos
+    str x26, [x25]        // rng.state
+
+Ldone:
+    // Epilogue: restore registers in reverse order
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp q14, q15, [sp, #208]
+    ldp q12, q13, [sp, #176]
+    ldp q10, q11, [sp, #144]
+    ldp q8,  q9,  [sp, #112]
+    ldp x29, x30, [sp], #240
+    ret 

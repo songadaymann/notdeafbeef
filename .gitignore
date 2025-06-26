@@ -1,0 +1,55 @@
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+*.obj
+
+# Executables
+bin/
+src/c/bin/
+output/
+
+# Audio files (generally too large for git)
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.au
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE/Editor
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Generated documentation
+docs/generated/
+
+# Exception: Keep small reference audio files in baseline/
+!tests/baseline/*.wav
+!src/reference/*.wav
+
+# Keep this specific config if it's small
+!fast_math_asm.h 

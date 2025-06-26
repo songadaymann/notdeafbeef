@@ -1,0 +1,129 @@
+// AArch64 assembly implementation of stereo delay line
+// void delay_process_block(delay_t *d, float *L, float *R, uint32_t n, float feedback)
+//   d: x0 = pointer to delay_t { float *buf; uint32_t size; uint32_t idx; }
+//   L: x1 = left channel buffer
+//   R: x2 = right channel buffer  
+//   n: w3 = number of samples
+//   feedback: s0 = feedback amount
+//
+// Ping-pong delay: L feeds to R, R feeds to L
+
+	.text
+	.align 2
+	.globl _delay_process_block
+
+_delay_process_block:
+	// Prologue: preserve frame pointer, link register, callee-saved GPRs and vector registers
+	stp x29, x30, [sp, #-160]!
+	stp x19, x20, [sp, #16]
+	stp q8,  q9,  [sp, #32]
+	stp q10, q11, [sp, #64]
+	stp q12, q13, [sp, #96]
+	stp q14, q15, [sp, #128]
+	mov x29, sp
+
+	// Load delay struct members
+	ldr x4, [x0]         // x4 = buf pointer
+	ldr w5, [x0, #8]     // w5 = size (delay length)
+	ldr w6, [x0, #12]    // w6 = idx (current position)
+	
+	// Early exit if n == 0
+	cbz w3, 2f
+
+	// --- DEBUG PRINT (runs only on first ever call) ---
+	adrp    x10, debug_once@PAGE        // load address of guard var
+	add     x10, x10, debug_once@PAGEOFF
+	ldr     w11, [x10]                 // w11 = debug_once
+	cbnz    w11, 3f                    // already printed -> skip
+	mov     w11, #1
+	str     w11, [x10]                 // set flag so we only print once
+
+	// Preserve s0 (feedback) across the printf call
+	sub     sp, sp, #16                // make room, keep 16-byte align
+	str     s0, [sp]
+	str     x0, [sp, #8]               // preserve delay struct pointer
+
+	adrp    x0, fmt_delay@PAGE         // x0 = format string
+	add     x0, x0, fmt_delay@PAGEOFF
+	mov     x1, x4                     // arg1: buf pointer
+	mov     w12, w5                    // copy size
+	mov     w13, w6                    // copy idx
+	mov     w14, w3                    // copy n
+	uxtw    x2, w12                    // arg2: size (unsigned)
+	uxtw    x3, w13                    // arg3: idx
+	uxtw    x15, w14                   // arg4: n (use x15 instead of x4!)
+	mov     x4, x15                    // move to x4 for printf call
+	bl      _printf                    // call printf(buf, size, idx, n)
+
+	// Restore x4 as buffer pointer after printf!
+	ldr     x0, [sp, #8]               // restore delay struct pointer
+	ldr     x4, [x0]                   // x4 = buf pointer (reload from delay struct)
+	ldr     s0, [sp]                   // restore feedback
+	add     sp, sp, #16
+3:
+	// --- END DEBUG PRINT ---
+	
+	// x7 = sample counter
+	mov w7, wzr
+	
+1:  // Main loop
+	// Ensure idx is in range before buffer access
+	cmp w6, w5           // idx >= size?
+	csel w6, wzr, w6, hs // wrap to 0 if needed
+	// Calculate buffer position: buf + idx*2*sizeof(float) = buf + idx*8
+	lsl w8, w6, #3       // w8 = idx * 8
+	add x9, x4, x8       // x9 = &buf[idx*2]
+	
+	// Load delay line values
+	ldp s1, s2, [x9]     // s1 = yl (left from delay), s2 = yr (right from delay)
+	
+	// Load input samples
+	ldr s3, [x1]         // s3 = L[i]
+	ldr s4, [x2]         // s4 = R[i]
+	
+	// Calculate new delay values with ping-pong
+	// buf[idx*2] = L[i] + yr * feedback
+	fmadd s5, s2, s0, s3  // s5 = L[i] + yr * feedback
+	// buf[idx*2+1] = R[i] + yl * feedback  
+	fmadd s6, s1, s0, s4  // s6 = R[i] + yl * feedback
+	
+	// Store new values to delay line
+	stp s5, s6, [x9]
+	
+	// Output the delayed values
+	str s1, [x1], #4     // L[i] = yl, advance L pointer
+	str s2, [x2], #4     // R[i] = yr, advance R pointer
+	
+	// Increment and wrap delay index
+	add w6, w6, #1       // idx++
+	cmp w6, w5           // if (idx >= size)
+	csel w6, wzr, w6, hs // idx = 0 if overflow, else keep idx
+	
+	// Loop control
+	add w7, w7, #1       // i++
+	cmp w7, w3           // i < n?
+	b.lo 1b
+	
+2:  // Exit - store updated index
+	str w6, [x0, #12]    // d->idx = idx
+
+	// Epilogue: restore callee-saved registers
+	ldp q14, q15, [sp, #128]
+	ldp q12, q13, [sp, #96]
+	ldp q10, q11, [sp, #64]
+	ldp q8,  q9,  [sp, #32]
+	ldp x19, x20, [sp, #16]
+	ldp x29, x30, [sp], #160
+	ret 
+
+	// --- RO / DATA ---
+	.section __DATA,__data
+	.align 3
+
+debug_once:
+	.quad 0
+
+	.section __TEXT,__cstring,cstring_literals
+fmt_delay:
+	.asciz "delay entry: buf=%p size=%u idx=%u n=%u\n"
+	.text 

@@ -1,0 +1,49 @@
+	.text
+	.align 2
+	.globl _exp_env_block
+// AArch64 assembly implementation of exponential decay envelope
+// void exp_env_block(float *out, uint32_t n, float rate, float sr)
+// x0 = out, w1 = n, s0 = rate, s1 = sr
+// Generates out[i] = exp(-rate * (i/sr)) using recurrence
+//   alpha = exp(-rate / sr);
+//   y = 1.0;
+//   for i=0..n-1 { out[i]=y; y*=alpha; }
+
+const_env:
+	.float -1.0
+	.float 1.0
+
+_exp_env_block:
+	stp x29, x30, [sp, #-16]!
+	mov x29, sp
+
+	cmp w1, #0          // if n==0 return
+	beq end
+
+	// Load constants
+	adrp x9, const_env@PAGE
+	add  x9, x9, const_env@PAGEOFF
+	ldr  s3, [x9]        // s3 = -1.0
+	ldr  s5, [x9, #4]    // s5 = 1.0 (initial y)
+
+	// s2 = -rate
+	fmul s2, s0, s3
+	// s2 = -rate / sr
+	fdiv s2, s2, s1
+	// alpha = expf(s2)
+	fmov s0, s2
+	bl _expf
+	fmov s4, s0          // s4 = alpha
+
+	mov w2, wzr          // i = 0
+loop:
+	str s5, [x0], #4     // store y and post-increment pointer
+	// y *= alpha
+	fmul s5, s5, s4
+	add w2, w2, #1
+	cmp w2, w1
+	b.lo loop
+
+end:
+	ldp x29, x30, [sp], #16
+	ret 
