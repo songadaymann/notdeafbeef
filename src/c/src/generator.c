@@ -1,6 +1,7 @@
 #include "generator.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include "fm_presets.h"
 #include "euclid.h"
 
@@ -103,14 +104,23 @@ void generator_init(generator_t *g, uint64_t seed)
     g->pos_in_step = 0;
     
     /* ---- Init Effects ---- */
-    float delay_factors[] = {2.0,1.0,0.5,0.25};
+#ifdef DELAY_FACTOR_OVERRIDE
+    float delay_factor = DELAY_FACTOR_OVERRIDE;
+#else
+    float delay_factors[] = {2.0f,1.0f,0.5f,0.25f};
     float delay_factor = delay_factors[rng_next_u32(&g->rng)%4];
+#endif
     uint32_t delay_samples = (uint32_t)(g->mt.beat_sec * delay_factor * SR);
     if(delay_samples > MAX_DELAY_SAMPLES) delay_samples = MAX_DELAY_SAMPLES;
     delay_init(&g->delay, g->delay_buf, delay_samples);
-    limiter_init(&g->limiter, SR, 1.0f, 200.0f, -1.0f);
+    printf("DEBUG: After delay_init - buf=%p size=%u idx=%u\n", g->delay.buf, g->delay.size, g->delay.idx);
+    printf("DEBUG: LLDB WATCHPOINT ADDRESSES - delay struct at %p, delay.size at %p, delay.idx at %p\n", 
+           &g->delay, &g->delay.size, &g->delay.idx);
+    /* Limiter tweak: faster attack/release and softer threshold (−0.1 dB) */
+    limiter_init(&g->limiter, SR, 0.5f, 50.0f, -0.1f);
 }
 
+#ifndef GENERATOR_ASM
 void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_frames)
 {
     /* clear visual event flags */
@@ -212,6 +222,7 @@ void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_
         }
     }
 
+    printf("DEBUG: Before delay_process_block - buf=%p size=%u idx=%u n=%u\n", g->delay.buf, g->delay.size, g->delay.idx, num_frames);
     delay_process_block(&g->delay, Ls, Rs, num_frames, 0.45f);
 
     /* Phase 5.1: Use C implementation for debugging */
@@ -228,4 +239,5 @@ void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_
         sum += L[i] * L[i] + R[i] * R[i];
     }
     g_block_rms = sqrtf(sum / (num_frames * 2));
-} 
+}
+#endif // GENERATOR_ASM 
