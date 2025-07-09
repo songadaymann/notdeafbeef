@@ -49,6 +49,8 @@ typedef struct {
 
 void generator_init(generator_t *g, uint64_t seed);
 void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_frames);
+void generator_process_voices(generator_t *g, float32_t *Ld, float32_t *Rd,
+                              float32_t *Ls, float32_t *Rs, uint32_t num_frames);
 
 /* Phase 5 - Pure Assembly Orchestration Functions */
 void generator_mix_buffers_asm(float32_t *L, float32_t *R, 
@@ -69,6 +71,8 @@ void generator_rotate_pattern_asm(uint8_t *pattern, uint8_t *tmp,
 void generator_build_events_asm(event_queue_t *q, rng_t *rng, 
                                const uint8_t *kick_pat, const uint8_t *snare_pat, const uint8_t *hat_pat,
                                uint32_t step_samples);
+
+void generator_trigger_step(generator_t *g);
 
 extern volatile float g_block_rms;
 

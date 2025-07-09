@@ -102,6 +102,13 @@ void generator_init(generator_t *g, uint64_t seed)
     g->event_idx = 0;
     g->step = 0;
     g->pos_in_step = 0;
+
+    /* Debug: count how many EVT_MID events were scheduled */
+    uint32_t mid_evt_count = 0;
+    for(uint32_t i = 0; i < g->q.count; i++){
+        if(g->q.events[i].type == EVT_MID) mid_evt_count++;
+    }
+    printf("DEBUG: EVT_MID events scheduled = %u\n", mid_evt_count);
     
     /* ---- Init Effects ---- */
 #ifdef DELAY_FACTOR_OVERRIDE
@@ -172,7 +179,7 @@ void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_
                         } else {
                             fm_params_t mid_presets[4] = {FM_PRESET_BELLS, FM_PRESET_CALM, FM_PRESET_QUANTUM, FM_PRESET_PLUCK};
                             fm_params_t p = mid_presets[(idx-3)%4];
-                            fm_voice_trigger(&g->mid_fm, freq, g->mt.step_sec, p.ratio, p.index, p.amp, p.decay);
+                            fm_voice_trigger(&g->mid_fm, freq, g->mt.step_sec + (1.0f/(float32_t)SR), p.ratio, p.index, p.amp, p.decay);
                         }
                         break; }
                     case EVT_FM_BASS: {
@@ -195,6 +202,16 @@ void generator_process(generator_t *g, float32_t *L, float32_t *R, uint32_t num_
 
         /* How many frames until the next step boundary? */
         uint32_t frames_to_step_boundary = g->mt.step_samples - g->pos_in_step;
+        /*
+         * FM sustain fix: ensure the first slice of every step processes at most
+         * step_samples-1 frames so notes longer than one slice are not fully
+         * consumed in a single call (they would then be silent on subsequent
+         * slices). Only apply when we are at the very start of a step and have
+         * more than one frame left to render.
+         */
+        if (g->pos_in_step == 0 && frames_to_step_boundary > 1) {
+            frames_to_step_boundary -= 1;
+        }
         uint32_t frames_to_process = (frames_rem < frames_to_step_boundary) ? frames_rem : frames_to_step_boundary;
 
         /* Render voices */

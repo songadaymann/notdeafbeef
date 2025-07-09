@@ -38,7 +38,8 @@ _snare_process:
     stp x21, x22, [sp, #32]
     stp x23, x24, [sp, #48]
     stp x25, x26, [sp, #64]
-    stp x27, x28, [sp, #80]
+    // SAFE OFFSETS: x27, x28 stored at safer location to avoid conflicts
+    stp x27, x28, [sp, #96]
 
     // Save important pointers in callee-saved registers
     mov x19, x0      // snare*
@@ -93,27 +94,31 @@ Lloop:
 
     // env = expf(-decay_rate * t)
     fmul s0, s10, s0     // -decay_rate * t -> s0
-    // Save registers before libm call
-    sub sp, sp, #64
-    stp x19, x20, [sp]
-    stp s8, s9, [sp, #8]
-    stp s10, s11, [sp, #16] 
-    stp s12, s13, [sp, #24]
-    stp s14, s15, [sp, #32]
-    stp s16, s17, [sp, #40]
-    stp s18, s19, [sp, #48]
-    stp s20, s21, [sp, #56]
+    // Save registers before libm call - INCLUDING FUNCTION PARAMETERS
+    sub sp, sp, #80
+    stp x0, x1, [sp]       // Save function parameters x0, x1
+    stp x2, x3, [sp, #8]   // Save function parameters x2, x3 (w3 contains n!)
+    stp x19, x20, [sp, #16]
+    stp s8, s9, [sp, #24]
+    stp s10, s11, [sp, #32] 
+    stp s12, s13, [sp, #40]
+    stp s14, s15, [sp, #48]
+    stp s16, s17, [sp, #56]
+    stp s18, s19, [sp, #64]
+    stp s20, s21, [sp, #72]
     bl   _expf           // env in s0
     // Restore registers after libm call
-    ldp s20, s21, [sp, #56]
-    ldp s18, s19, [sp, #48]
-    ldp s16, s17, [sp, #40]
-    ldp s14, s15, [sp, #32]
-    ldp s12, s13, [sp, #24]
-    ldp s10, s11, [sp, #16]
-    ldp s8, s9, [sp, #8]
-    ldp x19, x20, [sp]
-    add sp, sp, #64
+    ldp s20, s21, [sp, #72]
+    ldp s18, s19, [sp, #64]
+    ldp s16, s17, [sp, #56]
+    ldp s14, s15, [sp, #48]
+    ldp s12, s13, [sp, #40]
+    ldp s10, s11, [sp, #32]
+    ldp s8, s9, [sp, #24]
+    ldp x19, x20, [sp, #16]
+    ldp x2, x3, [sp, #8]   // Restore function parameters x2, x3
+    ldp x0, x1, [sp]       // Restore function parameters x0, x1
+    add sp, sp, #80
     fmov s15, s0         // preserve env in s15
 
     // -------- SplitMix64 RNG --------
@@ -169,7 +174,7 @@ Lend:
 
 Ldone:
     // Epilogue: restore registers in reverse order
-    ldp x27, x28, [sp, #80]
+    ldp x27, x28, [sp, #96]  // SAFE OFFSET
     ldp x25, x26, [sp, #64]
     ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]

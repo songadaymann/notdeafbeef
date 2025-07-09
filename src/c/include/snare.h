@@ -8,6 +8,8 @@ typedef struct {
     uint32_t pos;
     uint32_t len;
     float32_t sr;
+    float32_t env;        /* current envelope value */
+    float32_t env_coef;   /* per-sample decay coefficient */
     rng_t rng;
 } snare_t;
 

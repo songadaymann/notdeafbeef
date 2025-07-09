@@ -35,10 +35,19 @@ ifndef USE_ASM
   endif
 endif
 
-
+ifeq ($(findstring GENERATOR_ASM,$(VOICE_ASM)),)
+  GENERATOR_IS_C := 1
+else
+  GENERATOR_IS_C := 0
+endif
 
 # base flags
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Iinclude $(SDL_CFLAGS)
+
+# Enhanced debug flags for LLDB debugging with mixed C+assembly (mentioned in roadmap)
+ifeq ($(DEBUG),1)
+CFLAGS += -g -O0 -fstandalone-debug -fno-omit-frame-pointer
+endif
 
 # float32_t helper macro (typedef-like).  The NEON compile unit undefines it to avoid clash.
 CFLAGS += -Dfloat32_t=float
@@ -48,25 +57,88 @@ ifeq ($(PROFILE),1)
 CFLAGS += -pg -fno-omit-frame-pointer
 endif
 
+# Optional Address Sanitizer support (enable via ASAN=1)
+ifeq ($(ASAN),1)
+CFLAGS += -fsanitize=address -fno-omit-frame-pointer
+LDFLAGS += -fsanitize=address
+endif
+
 LDFLAGS := -framework AudioToolbox -framework CoreFoundation -framework OpenGL $(SDL_LIBS)
 
 # BEGIN ASM SUPPORT
 ifeq ($(USE_ASM),1)
 ASM_DIR := ../asm/active
 ASM_SRC := $(wildcard $(ASM_DIR)/*.s)
-# fm_voice.s is now implemented – include it in the build
-#ASM_SRC := $(filter-out $(ASM_DIR)/fm_voice.s,$(ASM_SRC))
+# If the VOICE_ASM variable is provided, include only the requested voice assembly files to
+# avoid duplicate symbol errors with the C fallback implementations.
+ifneq ($(origin VOICE_ASM), undefined)
+# 1) Remove all per-voice assembly files from the list
+ASM_SRC := $(filter-out $(ASM_DIR)/kick.s $(ASM_DIR)/snare.s $(ASM_DIR)/hat.s $(ASM_DIR)/melody.s $(ASM_DIR)/delay.s,$(ASM_SRC))
+
+# 2) Re-add only those explicitly requested via VOICE_ASM.
+ifneq ($(findstring KICK_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/kick.s
+endif
+ifneq ($(findstring SNARE_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/snare.s
+endif
+ifneq ($(findstring HAT_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/hat.s
+endif
+ifneq ($(findstring MELODY_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/melody.s
+endif
+ifneq ($(findstring DELAY_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/delay.s
+endif
+endif
+
+# --- Assembly generator (generator_process) opt-in -----------------------
+# By default we now EXCLUDE generator.s so that the stable C implementation
+# is used.  If you really want the work-in-progress assembly version, pass
+#   VOICE_ASM="GENERATOR_ASM"
+# or include GENERATOR_ASM in the existing list.
+
+# 1) Always remove generator.s first
+ASM_SRC := $(filter-out $(ASM_DIR)/generator.s,$(ASM_SRC))
+
+# 2) Re-add only if user explicitly asks for it
+ifneq ($(findstring GENERATOR_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/generator.s
+endif
+
 ASM_OBJ := $(ASM_SRC:.s=.o)
 # per-module ASM optimisation flags
 CFLAGS += -DOSC_SINE_ASM -DOSC_SHAPES_ASM
-# Voice assembly functions still have register corruption issues when combined
-# CFLAGS += -DKICK_ASM -DSNARE_ASM -DHAT_ASM -DMELODY_ASM -DFM_VOICE_ASM
+# Voice assembly macros. By default enable all voices that have an ASM version implemented.
+# For debugging you can override this via:
+#    make segment VOICE_ASM="KICK_ASM"            # only kick in ASM, others in C
+#    make segment VOICE_ASM="KICK_ASM SNARE_ASM"  # kick + snare in ASM
+# If VOICE_ASM is undefined we fall back to enabling every voice (legacy behaviour).
+ifeq ($(origin VOICE_ASM), undefined)
+CFLAGS += -DKICK_ASM -DSNARE_ASM -DHAT_ASM -DMELODY_ASM -DDELAY_ASM
+else
+CFLAGS += $(addprefix -D,$(VOICE_ASM))
+endif
+# CFLAGS += -DFM_VOICE_ASM
 else
 ASM_DIR :=
 ASM_SRC :=
 ASM_OBJ :=
 endif
 # END ASM SUPPORT
+
+# Detect whether the assembly delay implementation is included
+DELAY_ASM_PRESENT := $(filter $(ASM_DIR)/delay.s,$(ASM_SRC))
+# Detect whether the assembly limiter implementation is included
+LIMITER_ASM_PRESENT := $(filter $(ASM_DIR)/limiter.s,$(ASM_SRC))
+# Detect generator assembly presence
+GENERATOR_ASM_PRESENT := $(filter $(ASM_DIR)/generator.s,$(ASM_SRC))
+
+# If the assembly generator provides its own RMS helper, tell C sources not to compile the fallback
+ifeq ($(GENERATOR_ASM_PRESENT),$(ASM_DIR)/generator.s)
+CFLAGS += -DGENERATOR_RMS_ASM_PRESENT
+endif
 
 ifeq ($(USE_ASM),1)
   ifneq ($(ARCH),arm64)
@@ -103,14 +175,44 @@ BASSP_BIN := bin/gen_bass_plucky
 
 SEG_OBJ := src/segment.o src/wav_writer.o
 
-# Conditionally build GEN_OBJ based on USE_ASM
-ifeq ($(USE_ASM),1)
-# With assembly: include both ASM objects and C objects (C provides init/trigger, ASM provides process)  
-GEN_OBJ := $(ASM_OBJ) src/generator.o src/osc.o src/kick.o src/snare.o src/hat.o src/melody.o src/fm_voice.o $(NEON_OBJ) src/fm_presets.o src/event_queue.o src/simple_voice.o src/delay.o
-else
-# Pure C build: include all C objects
-GEN_OBJ := src/generator.o src/osc.o src/kick.o src/snare.o src/hat.o src/melody.o src/fm_voice.o $(NEON_OBJ) src/fm_presets.o src/event_queue.o src/simple_voice.o src/euclid.o src/limiter.o
+# -----------------------------------------------------------------
+# Conditional C object inclusion depending on whether ASM version
+# of each voice/effect is present (prevents duplicate symbols).
+# -----------------------------------------------------------------
+# Detect per-voice ASM presence
+KICK_ASM_PRESENT   := $(filter $(ASM_DIR)/kick.s,$(ASM_SRC))
+SNARE_ASM_PRESENT  := $(filter $(ASM_DIR)/snare.s,$(ASM_SRC))
+HAT_ASM_PRESENT    := $(filter $(ASM_DIR)/hat.s,$(ASM_SRC))
+MELODY_ASM_PRESENT := $(filter $(ASM_DIR)/melody.s,$(ASM_SRC))
+
+# Rebuild GEN_OBJ list: start with ASM objects and common C helpers
+GEN_OBJ := $(ASM_OBJ) src/osc.o $(NEON_OBJ) src/fm_voice.o src/fm_presets.o \
+          src/event_queue.o src/simple_voice.o
+
+# Always include per-voice C modules for init/trigger helpers.
+# Their heavy process() functions are wrapped in #ifndef <VOICE>_ASM so they
+# vanish when the corresponding -D<VOICE>_ASM flag is set, avoiding duplicate
+# symbols while still providing the lightweight helpers the generator relies on.
+GEN_OBJ += src/kick.o src/snare.o src/hat.o src/melody.o
+
+# Delay C fallback only when ASM version *not* present (it contains only the
+# process implementation guarded by #ifndef DELAY_ASM; omitting it when the
+# ASM version is linked avoids a redundant empty object).
+ifndef DELAY_ASM_PRESENT
+GEN_OBJ += src/delay.o
 endif
+
+# Generator: always include C for generator_init (compiled with -DGENERATOR_ASM)
+GEN_OBJ += src/generator.o
+
+# Limiter C fallback
+ifndef LIMITER_ASM_PRESENT
+GEN_OBJ += src/limiter.o
+endif
+
+# Always include step-trigger helper
+GEN_OBJ += src/generator_step.o
+
 REALTIME_OBJ := src/main_realtime.o src/coreaudio.o src/video.o src/raster.o src/terrain.o src/particles.o src/shapes.o src/crt_fx.o
 
 REALTIME_BIN := bin/realtime
@@ -131,7 +233,7 @@ $(TEST_BIN): src/gen_sine.c src/osc.o $(ASM_OBJ) src/wav_writer.o | bin
 $(TONE_BIN): src/gen_tones.c src/osc.o $(ASM_OBJ) src/wav_writer.o | bin
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(NOISE_BIN): src/gen_noise_delay.c src/osc.o $(ASM_OBJ) src/wav_writer.o | bin
+$(NOISE_BIN): src/gen_noise_delay.c src/osc.o src/delay.o $(ASM_OBJ) src/wav_writer.o | bin
 	$(CC) $(CFLAGS) -o $@ $^
 
 $(KICK_BIN): src/gen_kick.c src/kick.o $(ASM_OBJ) src/wav_writer.o | bin
@@ -155,7 +257,7 @@ $(TEST_BIN): src/gen_sine.c src/osc.o src/wav_writer.o | bin
 $(TONE_BIN): src/gen_tones.c src/osc.o src/wav_writer.o | bin
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(NOISE_BIN): src/gen_noise_delay.c src/osc.o src/wav_writer.o | bin
+$(NOISE_BIN): src/gen_noise_delay.c src/osc.o src/delay.o src/noise.o src/wav_writer.o | bin
 	$(CC) $(CFLAGS) -o $@ $^
 
 $(KICK_BIN): src/gen_kick.c src/kick.o src/wav_writer.o | bin
@@ -246,7 +348,7 @@ $(ASM_DIR):
 
 .PHONY: clean
 clean:
-	rm -rf $(OBJ) $(BIN) $(ASM_DIR)/*.o 2>/dev/null || true
+	rm -rf src/*.o bin src/euclid.o 2>/dev/null || true
 
 .PHONY: sine
 sine: $(TEST_BIN)
@@ -290,8 +392,10 @@ fm: clean $(FM_BIN)
 
 .PHONY: segment
 segment: $(SEG_BIN)
+ifndef NO_RUN
 	$(SEG_BIN)
 	@echo "Generated segment.wav"
+endif
 
 .PHONY: drums
 drums: $(DRUMS_BIN)

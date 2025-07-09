@@ -30,7 +30,7 @@ melody_f32_consts:
 
 _melody_process:
     // Prologue
-    stp x29, x30, [sp, #-240]!
+    stp x29, x30, [sp, #-288]!
     stp q8,  q9,  [sp, #112]
     stp q10, q11, [sp, #144]
     stp q12, q13, [sp, #176]
@@ -98,21 +98,24 @@ Lloop:
     fmul s1, s10, s0       // decay*t
     fneg s1, s1            // -decay*t
     fmov s0, s1
-    // Save phase to safe stack location (using safe offset 224)
-    str  s16, [sp, #224]
-    // Save registers before libm call - INCLUDING FUNCTION PARAMETERS
-    sub sp, sp, #80
-    stp x0, x1, [sp]       // Save function parameters x0, x1
-    stp x2, x3, [sp, #8]   // Save function parameters x2, x3 (w3 contains n!)
+    // BUFFER POINTER PRESERVATION: Save x23/x24 to safe slots before libm call
+    str x23, [x29, #272]
+    str x24, [x29, #280]
+    // Save registers before libm call
+    sub sp, sp, #128       // Scratch frame (128-byte) prevents overlap with main frame slots
+    stp x0, x1, [sp]
+    stp x2, x3, [sp, #8]
     stp x19, x20, [sp, #16]
-    stp s8, s9, [sp, #24]
-    stp s10, s11, [sp, #32] 
+    stp s8,  s9,  [sp, #24]
+    stp s10, s11, [sp, #32]
     stp s12, s13, [sp, #40]
     stp s14, s15, [sp, #48]
     stp s16, s17, [sp, #56]
     stp s18, s19, [sp, #64]
     stp s20, s21, [sp, #72]
+    stp x23, x24, [sp, #-16]!   // Preserve L/R pointers across libm
     bl   _expf           // env in s0
+    ldp x23, x24, [sp], #16
     // Restore registers after libm call
     ldp s20, s21, [sp, #72]
     ldp s18, s19, [sp, #64]
@@ -120,13 +123,15 @@ Lloop:
     ldp s14, s15, [sp, #48]
     ldp s12, s13, [sp, #40]
     ldp s10, s11, [sp, #32]
-    ldp s8, s9, [sp, #24]
+    ldp s8,  s9,  [sp, #24]
     ldp x19, x20, [sp, #16]
-    ldp x2, x3, [sp, #8]   // Restore function parameters x2, x3
-    ldp x0, x1, [sp]       // Restore function parameters x0, x1
-    add sp, sp, #80
-    // Restore phase from safe stack location
-    ldr  s16, [sp, #224]
+    ldp x2,  x3,  [sp, #8]
+    ldp x0,  x1,  [sp]
+    add sp, sp, #128
+    // BUFFER POINTER PRESERVATION: Restore x23/x24 from safe slots after libm call
+    ldr x23, [x29, #272]
+    ldr x24, [x29, #280]
+    // Restore phase is unnecessary because s16 was preserved in the scratch frame
     fmov s4, s0            // env in s4
 
     // Reload SOFT_B (0.5) which lives in caller-saved v3 that expf may clobber
@@ -194,5 +199,6 @@ Ldone:
     ldp q12, q13, [sp, #176]
     ldp q10, q11, [sp, #144]
     ldp q8,  q9,  [sp, #112]
-    ldp x29, x30, [sp], #240
+    ldp x29, x30, [sp], #288
+    dmb ish    // Ensure memory writes visible before returning
     ret 

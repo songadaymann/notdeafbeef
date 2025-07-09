@@ -1,5 +1,6 @@
 #include "fm_voice.h"
 #include <math.h>
+#include <stdio.h>
 #include "env.h"
 
 #define TAU 6.2831853071795864769f
@@ -22,12 +23,18 @@ void fm_voice_trigger(fm_voice_t *v, float32_t carrier_freq, float32_t duration_
     v->decay = decay;
     v->len = (uint32_t)(duration_sec * v->sr);
     v->pos = 0;
+    printf("FM_TRIGGER cf=%.2f dur=%.2f ratio=%.2f idx=%.2f amp=%.2f len=%u\n", carrier_freq, duration_sec, ratio, index, amp, v->len);
 }
 
 #ifndef FM_VOICE_ASM
 void fm_voice_process(fm_voice_t *v, float32_t *L, float32_t *R, uint32_t n)
 {
+    static int first_call=1;
     if (v->pos >= v->len) return;
+    if(first_call){
+        printf("FM_PROCESS first n=%u len=%u\n", n, v->len);
+        first_call=0;
+    }
     float32_t cp = v->carrier_phase;
     float32_t mp = v->mod_phase;
     float32_t c_inc = TAU * v->carrier_freq / v->sr;

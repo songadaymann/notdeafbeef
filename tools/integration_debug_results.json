@@ -1,0 +1,127 @@
+{
+  "pure_c_segment": {
+    "name": "pure_c_segment",
+    "success": false,
+    "duration": 4.284570932388306,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=0"
+    ]
+  },
+  "pure_c_individual_kick": {
+    "name": "pure_c_individual_kick",
+    "success": true,
+    "duration": 1.7044401168823242,
+    "args": [
+      "clean",
+      "kick",
+      "USE_ASM=0"
+    ]
+  },
+  "asm_individual_kick": {
+    "name": "asm_individual_kick",
+    "success": true,
+    "duration": 2.4239370822906494,
+    "args": [
+      "clean",
+      "kick",
+      "USE_ASM=1"
+    ]
+  },
+  "asm_individual_snare": {
+    "name": "asm_individual_snare",
+    "success": true,
+    "duration": 2.381485939025879,
+    "args": [
+      "clean",
+      "snare",
+      "USE_ASM=1"
+    ]
+  },
+  "asm_individual_hat": {
+    "name": "asm_individual_hat",
+    "success": true,
+    "duration": 2.349079132080078,
+    "args": [
+      "clean",
+      "hat",
+      "USE_ASM=1"
+    ]
+  },
+  "asm_individual_melody": {
+    "name": "asm_individual_melody",
+    "success": true,
+    "duration": 2.3753888607025146,
+    "args": [
+      "clean",
+      "melody",
+      "USE_ASM=1"
+    ]
+  },
+  "asm_segment_full": {
+    "name": "asm_segment_full",
+    "success": false,
+    "duration": 3.8401038646698,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1"
+    ]
+  },
+  "core_asm_only": {
+    "name": "core_asm_only",
+    "success": false,
+    "duration": 3.7382068634033203,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1",
+      "VOICE_ASM=0"
+    ]
+  },
+  "core_plus_kick": {
+    "name": "core_plus_kick",
+    "success": false,
+    "duration": 3.7895259857177734,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1",
+      "KICK_ONLY=1"
+    ]
+  },
+  "core_plus_snare": {
+    "name": "core_plus_snare",
+    "success": false,
+    "duration": 3.7784199714660645,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1",
+      "SNARE_ONLY=1"
+    ]
+  },
+  "core_plus_hat": {
+    "name": "core_plus_hat",
+    "success": false,
+    "duration": 3.79853892326355,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1",
+      "HAT_ONLY=1"
+    ]
+  },
+  "core_plus_melody": {
+    "name": "core_plus_melody",
+    "success": false,
+    "duration": 3.8230347633361816,
+    "args": [
+      "clean",
+      "segment",
+      "USE_ASM=1",
+      "MELODY_ONLY=1"
+    ]
+  }
+}

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 int main(void)
 {
@@ -14,12 +15,15 @@ int main(void)
 
     kick_t kick; kick_init(&kick, (float)sr);
 
+    printf("L base: %p\n", (void*)L);
+
     /* Trigger kick at 0.0, 0.5, 1.0, 1.5 sec */
     for(uint32_t frame = 0; frame < total_frames; frame += 256){
         float t = (float)frame / sr;
         if (fabsf(fmodf(t, 0.5f)) < 1e-4f) {
             kick_trigger(&kick);
         }
+        printf("call @ frame %u, ptr=%p\n", frame, (void*)&L[frame]);
         uint32_t block = (frame + 256 <= total_frames) ? 256 : (total_frames - frame);
         kick_process(&kick, &L[frame], &R[frame], block);
     }

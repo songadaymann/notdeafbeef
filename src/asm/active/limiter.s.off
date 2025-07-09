@@ -59,10 +59,6 @@ _limiter_process:
 	mov w23, wzr             // i = 0
 	
 loop:
-	// Break conditions
-	cmp w23, w22
-	b.hs Lstore_env     // i >= n → exit loop
-	
 	// Load samples
 	ldr s7, [x20, w23, sxtw #2]   // L[i]
 	ldr s8, [x21, w23, sxtw #2]   // R[i]
@@ -168,13 +164,11 @@ loop:
 	cmp w23, w22
 	b.lo loop
 	
-Lstore_env:
 	// Store final envelope
 	ldr s2, [sp, #64]
 	str s2, [x19, #8]
 	
-	// Fallthrough
-	done:
+done:
 	// Restore registers
 	ldp x19, x20, [sp, #16]
 	ldp x21, x22, [sp, #32]

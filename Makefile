@@ -10,7 +10,24 @@ c-build:
 
 # Generate test audio files  
 test-audio:
-	python tools/generate_test_wavs.py
+	python3 tools/generate_test_wavs.py
+
+# NEW: Generate comprehensive WAV tests for all sounds in both C and ASM
+test-comprehensive:
+	python3 tools/generate_comprehensive_tests.py
+
+# NEW: Compare C vs ASM WAV files
+compare:
+	python3 tools/compare_c_vs_asm.py
+
+# NEW: Play specific sound for audition (usage: make play SOUND=kick)
+play:
+ifndef SOUND
+	@echo "Usage: make play SOUND=<sound_name>"
+	@echo "Example: make play SOUND=kick"
+else
+	python3 tools/compare_c_vs_asm.py --play $(SOUND)
+endif
 
 # Run test suite
 test:
@@ -32,4 +49,9 @@ demo:
 verify: c-build test-audio
 	@echo "✅ NotDeafbeef verification complete!"
 
-.PHONY: all c-build test-audio test clean demo verify
+# NEW: Full verification including comprehensive tests
+verify-full: c-build test-comprehensive compare
+	@echo "✅ NotDeafbeef full verification complete!"
+	@echo "Check the comparison output above for any issues."
+
+.PHONY: all c-build test-audio test-comprehensive compare play test clean demo verify verify-full

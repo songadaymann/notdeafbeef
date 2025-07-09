@@ -10,7 +10,7 @@ _generator_process:
 	// Args: x0 = g, x1 = L, x2 = R, w3 = num_frames
 
 	// Prologue – save frame pointer & callee-saved regs (x19-x22)
-	stp x29, x30, [sp, #-96]!
+	stp x29, x30, [sp, #-128]!   // reserve 128-byte fixed frame (was 96)
 	mov x29, sp
 	stp x19, x20, [sp, #16]
 	stp x21, x22, [sp, #32]
@@ -58,9 +58,9 @@ _generator_process:
 	add x3, x2, x5         // Rs
 	mov w4, w21            // num_frames
 
-	stp x21, x22, [sp, #-16]!
+	stp x21, x22, [sp, #96]     // save frames_rem & x22 inside fixed frame
 	bl _generator_clear_buffers_asm
-	ldp x21, x22, [sp], #16
+	ldp x21, x22, [sp, #96]     // restore w21, x22 (sp unchanged)
 
 	// ---------------------------------------------------------------------
 	// Skip explicit memset on L/R since they will be fully overwritten by
@@ -73,7 +73,7 @@ _generator_process:
 	//   x24 = g (generator*) – set now
 	// Use x10 as pointer to timing/event fields (base = g + 4352)
 	add x10, x24, #0x1000    // x10 = g + 4096
-	add x10, x10, #0x100     // +256 => g + 4352
+	add x10, x10, #0x128     // +296 => g + 4392 (event_idx)
 
 	ldr w9, [x24, #12]      // w9 = step_samples (offset 12 bytes)
 	ldr w8, [x10, #8]       // w8 = pos_in_step (event base + 8)
@@ -108,19 +108,22 @@ _generator_process:
 
 	// Slice-3: Trigger events at step start
 	cbnz w8, .Lgp_trigger_skip                   // Only trigger when pos_in_step == 0
+	// Preserve caller-saved x8/x9 that hold pos_in_step & scratch before calling C helper
+	stp x8, x9, [sp, #112]        // save into fixed 128-byte frame (offsets 112-127)
 	mov x0, x24                   // x0 = g pointer
 	bl _generator_trigger_step
+	ldp x8, x9, [sp, #112]        // restore registers (keeps sp constant)
 
 .Lgp_trigger_skip:
 	// Recompute event/state base pointer after external calls may clobber x10
 	add x10, x24, #0x1000
-	add x10, x10, #0x100    // x10 = &g->event_idx
+	add x10, x10, #0x128    // x10 = &g->event_idx
 	ldr w9, [x24, #12]
 
 	// Reload constant step_samples in case caller-saved w9 was clobbered
 	ldr w9, [x24, #12]           // w9 = step_samples (offset 12 bytes)
 	// frames_to_step_boundary = step_samples - pos_in_step
-	sub w10, w9, w8              // w10 = frames_to_step_boundary
+	sub w10, w9, w8              // w10 = frames_to_step_boundary  (no slice-shortening)
 
 	// frames_to_process = min(frames_rem, frames_to_step_boundary)
 	cmp w21, w10
@@ -146,7 +149,7 @@ _generator_process:
 	add x18, x20, x12           // R dest
 
 	// Call voice processor (preserve x21 across call)
-	stp x21, x22, [sp, #-16]!   // save frames_rem and x22 (w11 holder)
+	stp x21, x22, [sp, #96]     // save frames_rem & x22 inside fixed frame
 
 	mov x0, x24                 // g pointer
 	mov x1, x13                 // Ld
@@ -156,11 +159,11 @@ _generator_process:
 	mov w5, w11                 // num_frames
 	bl _generator_process_voices
 
-	ldp x21, x22, [sp], #16     // restore frames_rem and w11 holder
+	ldp x21, x22, [sp, #96]     // restore w21, x22 (sp unchanged)
 
 	// Recompute event/state base pointer after _generator_process_voices (x10 may be clobbered)
 	add x10, x24, #0x1000
-	add x10, x10, #0x100    // x10 = &g->event_idx
+	add x10, x10, #0x128    // x10 = &g->event_idx
 
 	// Restore w11 from x22 after helper
 	mov w11, w22               // restore frames_to_process
@@ -198,19 +201,64 @@ _generator_process:
 	mov w6, w11                 // num_frames
 	bl _generator_mix_buffers_asm
 
+	// ----- SCRATCH RMS PROBE (debug – first slice only) -----
+	.if 0
+		cbnz w23, .Lskip_scratch_rms    // only when frames_done == 0
+
+		// Save caller-saved regs we will clobber (x0-x3)
+		stp x0, x1, [sp, #-16]!
+		stp x2, x3, [sp, #-16]!
+
+		// ---- drums scratch RMS (Ld/Rd) ----
+		mov x0, x13      // Ld
+		mov x1, x14      // Rd
+		mov w2, w11      // num_frames in slice
+		bl  _generator_compute_rms_asm   // s0 = RMS
+		fmov w4, s0                      // raw bits -> w4
+
+		// ---- synth scratch RMS (Ls/Rs) ----
+		mov x0, x15      // Ls
+		mov x1, x16      // Rs
+		mov w2, w11
+		bl  _generator_compute_rms_asm   // s0 = RMS
+		fmov w5, s0                      // raw bits -> w5
+
+		// printf("SCR drums=%u synth=%u n=%u\n", drums_bits, synth_bits, frames_to_process)
+		adrp x0, .Ldbg_scratch_fmt@PAGE
+		add  x0, x0, .Ldbg_scratch_fmt@PAGEOFF
+		mov  w1, w4
+		mov  w2, w5
+		mov  w3, w11
+		bl   _printf
+
+		// Restore clobbered regs
+		ldp x2, x3, [sp], #16
+		ldp x0, x1, [sp], #16
+
+	.Lskip_scratch_rms:
+	.endif
+
 	// ----- RMS DEBUG -----
-.if 0
-	stp x0, x1, [sp, #-16]!          // save regs for printf
-	mov x0, x17                       // L buffer pointer
-	mov x1, x18                       // R buffer pointer
-	mov w2, w11                       // num_frames this slice
-	bl _generator_compute_rms_asm     // s0 = RMS (float)
-	fmov w1, s0                       // move raw bits for printf
-	adrp x0, .Ldbg_rms_fmt@PAGE       // format string
-	add  x0, x0, .Ldbg_rms_fmt@PAGEOFF
-	bl _printf
-	ldp x0, x1, [sp], #16             // restore regs
-.endif
+	.if 0
+	    // Save x0–x3 into unused area of 128-byte fixed frame (keeps sp constant)
+	    stp x0, x1, [x29, #96]
+	    stp x2, x3, [x29, #112]
+
+	    mov x0, x17                       // L buffer pointer
+	    mov x1, x18                       // R buffer pointer
+	    mov w2, w11                       // num_frames this slice
+	    bl _generator_compute_rms_asm     // s0 = RMS (float)
+
+	    // Print raw IEEE bits so we avoid float formatting overhead
+	    fmov w1, s0                       // RMS bits → w1
+	    adrp x0, .Ldbg_rms_fmt@PAGE       // format string "%u\n"
+	    add  x0, x0, .Ldbg_rms_fmt@PAGEOFF
+	    bl  _printf
+
+	    // Restore x0–x3
+	    ldp x2, x3, [x29, #112]
+	    ldp x0, x1, [x29, #96]
+	.endif
 	// ----- END RMS DEBUG -----
 
 	// DEBUG PRINT BEGIN
@@ -230,6 +278,10 @@ _generator_process:
 
 	// Advance counters
 	add w8, w8, w11              // pos_in_step += frames_to_process
+    // write back updated pos_in_step to struct
+    add x10, x24, #0x1000
+    add x10, x10, #0x128   // correct base for event/state block (g + 4392)
+    str w8, [x10, #8]
 	sub w21, w21, w11            // frames_rem  -= frames_to_process
 	add w23, w23, w11            // frames_done += frames_to_process
 
@@ -241,7 +293,8 @@ _generator_process:
 	mov w8, wzr
 	// Recompute event/state base pointer again (x10 may be clobbered by helpers)
 	add x10, x24, #0x1000
-	add x10, x10, #0x100   // x10 = &g->event_idx
+	add x10, x10, #0x128   // x10 = &g->event_idx
+	str w8, [x10, #8]       // write back pos_in_step = 0 to generator struct
 	ldr w12, [x10, #4]        // w12 = step (event base + 4)
 	add w12, w12, #1
 	cmp w12, w13
@@ -259,8 +312,10 @@ _generator_process:
 	mov x0, x25
 	bl _free
 
-	// TEMP BYPASS delay & limiter for silence-debug
-	b .Lgp_epilogue
+	// TEMP BYPASS delay & limiter for debug RMS (define DEBUG_SKIP_POST_DSP)
+	#ifdef DEBUG_SKIP_POST_DSP
+	    b .Lgp_epilogue
+	#endif
 
 	// ---------------------------------------------------------------------
 	// Slice-5: Apply Delay & Limiter (C implementations)
@@ -271,9 +326,9 @@ _generator_process:
 	// Prepare arguments for delay_process_block
 	// x24 = g (preserved), x19 = L buffer, x20 = R buffer, w23 = total num_frames
 
-	// x0 = &g->delay  (offset 4368 bytes)
+	// x0 = &g->delay  (offset 4408 bytes)
 	add x0, x24, #4096        // base offset
-	add x0, x0, #272          // 4096 + 272 = 4368
+	add x0, x0, #312          // 4096 + 312 = 4408
 	mov x1, x19               // L
 	mov x2, x20               // R
 	mov w3, w23               // n = num_frames
@@ -283,14 +338,16 @@ _generator_process:
 	fmov s0, w4
 	bl _delay_process_block
 
-	// Prepare arguments for limiter_process
-	// x0 = &g->limiter (offset 4384 bytes)
-	add x0, x24, #4096        // base offset
-	add x0, x0, #288          // 4096 + 288 = 4384
-	mov x1, x19               // L
-	mov x2, x20               // R
-	mov w3, w23               // n = num_frames
-	bl _limiter_process
+    #ifndef SKIP_LIMITER
+    // Prepare arguments for limiter_process
+    // x0 = &g->limiter (offset 4424 bytes)
+    add x0, x24, #4096        // base offset
+    add x0, x0, #328          // 4096 + 328 = 4424
+    mov x1, x19               // L
+    mov x2, x20               // R
+    mov w3, w23               // n = num_frames
+    bl _limiter_process
+    #endif
 
 	// Existing epilogue label below handles register restore and return
 
@@ -301,7 +358,7 @@ _generator_process:
 	ldp x23, x24, [x29, #48]
 	ldp x21, x22, [x29, #32]
 	ldp x19, x20, [x29, #16]
-	ldp x29, x30, [sp], #96
+	ldp x29, x30, [sp], #128    // pop full 128-byte frame
 	ret
 
 /*
@@ -914,3 +971,5 @@ _generator_rng_next_float_asm:
     .asciz "P1:  rem=%u proc=%u pos=%u\n" 
 .Ldbg_rms_fmt:
 	.asciz "RMSraw=%u\n" 
+.Ldbg_scratch_fmt:
+	.asciz "SCR drums=%u synth=%u n=%u\n" 

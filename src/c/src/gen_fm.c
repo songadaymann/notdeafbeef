@@ -38,7 +38,7 @@ int main(void)
         int16_t s=(int16_t)(v*32767);
         pcm[2*i]=s; pcm[2*i+1]=s;
     }
-    write_wav("fm-c.wav",pcm,total_frames,2,sr);
+    write_wav("fm.wav",pcm,total_frames,2,sr);
     free(L);free(R);free(pcm);
     return 0;
 } 

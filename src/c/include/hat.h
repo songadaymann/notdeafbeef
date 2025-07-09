@@ -8,6 +8,8 @@ typedef struct {
     uint32_t pos;
     uint32_t len;
     float32_t sr;
+    float32_t env;
+    float32_t env_coef;
     rng_t rng;
 } hat_t;
 
