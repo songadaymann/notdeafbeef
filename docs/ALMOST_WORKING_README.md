@@ -34,13 +34,20 @@ You should hear:
 
 * Dry drums (kick / snare / hat)
 * Melody lead
-* FM bass & pad (C/NEON fallback)
-* Additive stereo echoes from the ping-pong delay
+* FM bass
+* Delay tail (stereo echoes)
 * Overall loudness capped by the hard-limiter
 
-If you do **not** hear the dry mix (only echoes) double-check that you are on this commit and that `DELAY_ASM` is defined – the additive logic lives in `delay.s`.
+⚠️  **Known issue:** the mid-range FM pad (processed by `fm_voice_process`) is still **silent** in this snapshot.  All nine EVT_MID triggers fire and the C implementation executes, but the rendered audio is zero.  Investigation continues (suspect register clobber or buffer overwrite after mixing).
+
+If you hear only the delay tail and not the dry mix, verify that you built with the additive assembly delay (`DELAY_ASM`) enabled.
 
 ---
+
+### Current Focus
+
+* Debug why FM pad is silent despite triggers firing.
+* Ensure slice-shortening logic in `generator.s` matches the C fallback, then re-enable FM voices in assembly once stable.
 
 ### Next Milestones
 

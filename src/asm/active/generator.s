@@ -124,7 +124,14 @@ _generator_process:
 	ldr w9, [x24, #12]           // w9 = step_samples (offset 12 bytes)
 	// frames_to_step_boundary = step_samples - pos_in_step
 	sub w10, w9, w8              // w10 = frames_to_step_boundary  (no slice-shortening)
-
+	// FM sustain fix: if pos_in_step == 0 and frames_to_step_boundary > 1, decrement by 1 so
+	// that voices (particularly fm_voice) spread notes over at least two slices. This mirrors
+	// the logic added in generator.c (Round 23 fix).
+	cbnz w8, 1f                 // if pos_in_step != 0, skip
+	cmp  w10, #1
+	ble 1f                      // if boundary <=1, nothing to shorten
+	sub  w10, w10, #1           // frames_to_step_boundary -= 1
+1:
 	// frames_to_process = min(frames_rem, frames_to_step_boundary)
 	cmp w21, w10
 	b.lt 1f
@@ -133,8 +140,8 @@ _generator_process:
 1:	mov w11, w21
 2:
 	// ---------- Slice-4: Voice processing + mixing ----------
-	// Save frames_to_process into callee-saved x22 to survive C call
-	mov x22, x11               // preserve w11
+	// Save frames_to_process into callee-saved x22 to survive C call (zero-extend to avoid garbage high bits)
+	mov w22, w11               // preserve w11, zeroing upper 32 bits of x22
 
 	// Compute byte offset into scratch/output for frames_done
 	lsl x12, x23, #2            // x12 = frames_done * 4 (bytes)
