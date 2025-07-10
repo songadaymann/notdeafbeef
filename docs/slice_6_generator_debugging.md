@@ -499,3 +499,39 @@ Immediate focus: trap that first write to `g.delay.buf`, fix its offset or move 
 * Stable hybrid: ASM generator, mixer, drums, limiter; C additive delay, melody, FM voices.
 * Entire mix (dry + echo) plays correctly without crashes.
 * TODOs: (1) mirror additive delay change into `delay.s` and flip `DELAY_ASM` back on; (2) resolve melody duplicate-symbol issue to re-enable `MELODY_ASM`; (3) port FM/NEON voices. 
+
+## Round 33 – 32-bit Spill Fix Unfreezes Slice Loop (5 Dec 2025)
+
+| Step | Change / Investigation | Result | Insight |
+|------|------------------------|--------|---------|
+| 125 | Set LLDB breakpoint at first instruction of `.Lgp_loop`; captured counters (`w21`,`w8`,`w11`). | `w11` held **0xFFFF8F38** (negative garbage) before first slice calc. | High 32-bits of `frames_to_process` were uninitialised. |
+| 126 | Traced spill path: `mov x22, x11` saved the value, later restored with `mov w11, w22`. Upper half of `x22` remained junk and leaked back. | Confirmed via second breakpoint: `w11` sane (12 713) inside slice but corrupted on next loop entry. | 64-bit move preserved garbage. |
+| 127 | Patched `generator.s`: changed spill to `mov w22, w11` (32-bit zero-extend). | Rebuilt & ran full ASM build (`GENERATOR_ASM KICK_ASM SNARE_ASM HAT_ASM LIMITER_ASM MELODY_ASM`). | Render completed in <300 ms; slice loop processed all 32 steps. |
+| 128 | Listening test: kick, snare, hat, melody saw, **bass FM** present; mid-FM pad still silent but overall mix plays with delay tail. RMS ≈ –17 dBFS. | Outer-loop hang completely resolved. | Remaining work is FM/NEON voice sustain & porting additive delay to `delay.s`. |
+
+**Status**
+* Outer slice loop stable; `frames_to_process` corruption fixed.
+* All drums + melody audible; FM pad still one-slice bug from earlier rounds.
+* Next TODOs:   
+  1. Port additive delay change to `delay.s` and re-enable `DELAY_ASM`.  
+  2. Investigate FM pad sustain (likely same “whole-note in first slice” logic).  
+  3. Begin NEON FM voice ports once sustain logic confirmed. 
+
+## Round 34 – Slice-Shortening Fix Landed & Melody-ASM Regression (10 Dec 2025)
+
+| Step | Change / Investigation | Result | Insight |
+|------|------------------------|--------|---------|
+| 129 | Re-examined early log and re-implemented **slice-shortening** in `generator.s` (first slice processes `step_samples-1` frames). | Build + run (C melody) plays drums, melody, **bass FM**; mid-FM pad still silent but notes now span multiple slices. | Confirms original “one-slice” root cause fixed in ASM.
+| 130 | Cleaned debug prints; pushed commit `2189a42` to branch `almost-working`. | Remote now mirrors stable state without intrusive printf code. | Prevents future “Heisenbugs”. |
+| 131 | Enabled `MELODY_ASM` to test full ASM voice chain. | Program rendered only first **2 beats** (kick+snare+bass) then fell silent except for delay tail; RMS dropped to 0.02. | Assembly `melody.s` clobbers loop state (likely `x8`/`x10`); outer loop stalls early. |
+| 132 | Added temporary save/restore of `x8/x9` around `_generator_process_voices` → made things **worse** (zero MID triggers) so reverted change and disabled `MELODY_ASM`. | Baseline restored (everything ASM except melody & FM). | Confirms melody bug lives *inside* `melody.s`, not generator.
+
+**Current Snapshot (commit 2189a42)**
+* ASM: generator, drums, delay, limiter, mixer helpers.
+* C: melody, FM voices, simple_voice.
+* Outer loop stable; file renders full 32-step segment.
+* Mid-FM pad still silent (one-slice bug remains in FM C path).
+
+### First task tomorrow
+1. Audit `src/asm/active/melody.s` for missing callee-saved register preservation (x8/x10/x21).  Make `MELODY_ASM` play without stalling outer loop.
+2. Then return to FM pad sustain investigation. 
