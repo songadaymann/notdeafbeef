@@ -8,6 +8,14 @@ all: c-build
 c-build:
 	$(MAKE) -C src/c
 
+# Build visual system (isolated from audio)
+vis-build:
+	gcc -o bin/vis_main src/vis_main.c src/visual_core.c src/drawing.c src/terrain.c src/particles.c src/ascii_renderer.c src/glitch_system.c src/bass_hits.c src/wav_reader.c -Iinclude $(shell pkg-config --cflags --libs sdl2) -lm
+
+# Build audio system only (for protection verification)
+audio:
+	$(MAKE) -C src/c segment USE_ASM=1 VOICE_ASM="GENERATOR_ASM KICK_ASM SNARE_ASM HAT_ASM MELODY_ASM LIMITER_ASM"
+
 # Generate test audio files  
 test-audio:
 	python3 tools/generate_test_wavs.py
@@ -54,4 +62,4 @@ verify-full: c-build test-comprehensive compare
 	@echo "✅ NotDeafbeef full verification complete!"
 	@echo "Check the comparison output above for any issues."
 
-.PHONY: all c-build test-audio test-comprehensive compare play test clean demo verify verify-full
+.PHONY: all c-build vis-build audio test-audio test-comprehensive compare play test clean demo verify verify-full

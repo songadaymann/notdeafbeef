@@ -108,6 +108,8 @@ ASM_SRC += $(ASM_DIR)/generator.s
 endif
 
 ASM_OBJ := $(ASM_SRC:.s=.o)
+# Add precompiled math objects needed by assembly code
+ASM_OBJ += $(ASM_DIR)/exp4_ps_asm.o $(ASM_DIR)/sin4_ps_asm.o
 # per-module ASM optimisation flags
 CFLAGS += -DOSC_SINE_ASM -DOSC_SHAPES_ASM
 # Voice assembly macros. By default enable all voices that have an ASM version implemented.
@@ -120,7 +122,7 @@ CFLAGS += -DKICK_ASM -DSNARE_ASM -DHAT_ASM -DMELODY_ASM -DDELAY_ASM
 else
 CFLAGS += $(addprefix -D,$(VOICE_ASM))
 endif
-# CFLAGS += -DFM_VOICE_ASM
+CFLAGS += -DFM_VOICE_ASM
 else
 ASM_DIR :=
 ASM_SRC :=
@@ -186,8 +188,14 @@ HAT_ASM_PRESENT    := $(filter $(ASM_DIR)/hat.s,$(ASM_SRC))
 MELODY_ASM_PRESENT := $(filter $(ASM_DIR)/melody.s,$(ASM_SRC))
 
 # Rebuild GEN_OBJ list: start with ASM objects and common C helpers
-GEN_OBJ := $(ASM_OBJ) src/osc.o $(NEON_OBJ) src/fm_voice.o src/fm_presets.o \
+GEN_OBJ := $(ASM_OBJ) src/osc.o $(NEON_OBJ) src/fm_presets.o \
           src/event_queue.o src/simple_voice.o
+
+# Add FM voice object (ASM process + C helpers, or pure C)
+GEN_OBJ += src/fm_voice.o
+ifeq ($(findstring -DFM_VOICE_ASM,$(CFLAGS)),-DFM_VOICE_ASM)
+GEN_OBJ += $(ASM_DIR)/fm_voice.o
+endif
 
 # Always include per-voice C modules for init/trigger helpers.
 # Their heavy process() functions are wrapped in #ifndef <VOICE>_ASM so they
