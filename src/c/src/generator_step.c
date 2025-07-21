@@ -7,6 +7,9 @@
 
 #define DEBUG_MID_LOG 1
 
+#define DEBUG_STEP_LOG 1
+/* Additional step logging */
+
 /* Helper for RNG float (copied from generator.c) */
 #define RNG_FLOAT(rng) ( (rng_next_u32(rng) >> 8) * (1.0f/16777216.0f) )
 
@@ -15,6 +18,9 @@ int g_mid_trigger_count = 0;
 
 void generator_trigger_step(generator_t *g)
 {
+    #if DEBUG_STEP_LOG
+    printf("GEN_TRIGGER step=%u pos=%u event_idx=%u\n", g->step, g->pos_in_step, g->event_idx);
+    #endif
     /* Only act at the very start of a step */
     if(g->pos_in_step != 0) return;
 
@@ -22,7 +28,7 @@ void generator_trigger_step(generator_t *g)
 
     while(g->event_idx < g->q.count && g->q.events[g->event_idx].time == t_step_start){
         event_t *e = &g->q.events[g->event_idx];
-        printf("TRIGGER type=%u aux=%u step=%u pos=%u\n", e->type, e->aux, g->step, g->pos_in_step);
+        /* printf("TRIGGER type=%u aux=%u step=%u pos=%u\n", e->type, e->aux, g->step, g->pos_in_step); */
         switch(e->type){
             case EVT_KICK:
                 kick_trigger(&g->kick);
@@ -57,7 +63,7 @@ void generator_trigger_step(generator_t *g)
                 break; }
             case EVT_MID: {
                 /* TEMP DEBUG: Log each mid trigger */
-#ifdef DEBUG_MID_LOG
+#if DEBUG_MID_LOG
                 printf("MID TRIGGER step=%u aux=%u pos=%u\n", g->step, e->aux, g->pos_in_step);
 #endif
                 g_mid_trigger_count++; /* count how many actually fire */
@@ -97,7 +103,7 @@ void generator_trigger_step(generator_t *g)
         g->event_idx++;
     }
 
-#ifdef DEBUG_MID_LOG
+#if DEBUG_MID_LOG
     printf("TRIGGER_STEP END event_idx=%u step=%u pos=%u\n", g->event_idx, g->step, g->pos_in_step);
 #endif
 }

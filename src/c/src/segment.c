@@ -40,6 +40,8 @@ int main(int argc, char **argv)
 
     printf("C-DBG before gen_process: step_samples=%u addr=%p\n", g.mt.step_samples, &g.mt.step_samples);
     generator_process(&g, L, R, total_frames);
+
+    printf("AFTER gen_process: step=%u pos_in_step=%u frames_rem post? (unused)\n", g.step, g.pos_in_step);
     
     /* RMS diagnostic to verify audio energy */
     float rms = generator_compute_rms_asm(L, R, total_frames);

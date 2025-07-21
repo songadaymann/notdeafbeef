@@ -73,7 +73,7 @@ ASM_SRC := $(wildcard $(ASM_DIR)/*.s)
 # avoid duplicate symbol errors with the C fallback implementations.
 ifneq ($(origin VOICE_ASM), undefined)
 # 1) Remove all per-voice assembly files from the list
-ASM_SRC := $(filter-out $(ASM_DIR)/kick.s $(ASM_DIR)/snare.s $(ASM_DIR)/hat.s $(ASM_DIR)/melody.s $(ASM_DIR)/delay.s,$(ASM_SRC))
+ASM_SRC := $(filter-out $(ASM_DIR)/kick.s $(ASM_DIR)/snare.s $(ASM_DIR)/hat.s $(ASM_DIR)/melody.s $(ASM_DIR)/delay.s $(ASM_DIR)/fm_voice.s,$(ASM_SRC))
 
 # 2) Re-add only those explicitly requested via VOICE_ASM.
 ifneq ($(findstring KICK_ASM,$(VOICE_ASM)),)
@@ -90,6 +90,9 @@ ASM_SRC += $(ASM_DIR)/melody.s
 endif
 ifneq ($(findstring DELAY_ASM,$(VOICE_ASM)),)
 ASM_SRC += $(ASM_DIR)/delay.s
+endif
+ifneq ($(findstring FM_VOICE_ASM,$(VOICE_ASM)),)
+ASM_SRC += $(ASM_DIR)/fm_voice.s
 endif
 endif
 
@@ -184,6 +187,7 @@ KICK_ASM_PRESENT   := $(filter $(ASM_DIR)/kick.s,$(ASM_SRC))
 SNARE_ASM_PRESENT  := $(filter $(ASM_DIR)/snare.s,$(ASM_SRC))
 HAT_ASM_PRESENT    := $(filter $(ASM_DIR)/hat.s,$(ASM_SRC))
 MELODY_ASM_PRESENT := $(filter $(ASM_DIR)/melody.s,$(ASM_SRC))
+FM_VOICE_ASM_PRESENT := $(filter $(ASM_DIR)/fm_voice.s,$(ASM_SRC))
 
 # Rebuild GEN_OBJ list: start with ASM objects and common C helpers
 GEN_OBJ := $(ASM_OBJ) src/osc.o $(NEON_OBJ) src/fm_voice.o src/fm_presets.o \

@@ -28,8 +28,8 @@ _generator_process:
 	// (dup line removed)
 	// (generator pointer already preserved earlier)
 
-	// Preserve num_frames in callee-saved x21 for later reuse
-	mov x21, x3            // x21 = num_frames (32-bit valid)
+	// Preserve num_frames in callee-saved x21 for later reuse (zero-extend to clear upper bits)
+	mov w21, w3            // x21 = num_frames (upper 32 bits zero)
 
 	// ---------------------------------------------------------------------
 	// Allocate contiguous scratch block on heap instead of stack
@@ -50,6 +50,10 @@ _generator_process:
 	add x26, x25, x5       // Rd = Ld + size
 	add x27, x26, x5       // Ls
 	add x28, x27, x5       // Rs
+
+	// Save scratch base pointers into fixed frame slots so we can restore after voice helpers
+	stp x25, x26, [sp, #64]
+	stp x27, x28, [sp, #80]
 
 	// Prepare arguments for generator_clear_buffers_asm
 	mov x0, x25            // Ld
@@ -156,7 +160,11 @@ _generator_process:
 	add x18, x20, x12           // R dest
 
 	// Call voice processor (preserve x21 across call)
-	stp x21, x22, [sp, #96]     // save frames_rem & x22 inside fixed frame
+		// Save loop counters and pos_in_step regs across voice helper
+		stp x21, x22, [sp, #96]     // save counters
+		// Also save scratch base pointers again in case helpers clobber them
+		stp x25, x26, [sp, #64]
+		stp x27, x28, [sp, #80]
 
 	mov x0, x24                 // g pointer
 	mov x1, x13                 // Ld
@@ -166,7 +174,10 @@ _generator_process:
 	mov w5, w11                 // num_frames
 	bl _generator_process_voices
 
-	ldp x21, x22, [sp, #96]     // restore w21, x22 (sp unchanged)
+        ldp x21, x22, [sp, #96]     // restore w21, x22 (sp unchanged)
+        // Restore scratch base pointers after voice helpers (they may clobber callee-saved regs)
+        ldp x25, x26, [sp, #64]
+        ldp x27, x28, [sp, #80]
 
 	// Recompute event/state base pointer after _generator_process_voices (x10 may be clobbered)
 	add x10, x24, #0x1000
@@ -176,6 +187,8 @@ _generator_process:
 	mov w11, w22               // restore frames_to_process
 	// Reload pos_in_step since w8 is caller-clobbered
 	ldr w8, [x10, #8]
+	// Reload step_samples since x9 is caller-saved and may be clobbered by voice helpers
+	ldr w9, [x24, #12]          // w9 = g->mt.step_samples (offset 12)
 
     // ----- TRACE1: after voice processing -----
 .if 0
@@ -206,7 +219,15 @@ _generator_process:
 	mov x4, x15                 // Ls
 	mov x5, x16                 // Rs
 	mov w6, w11                 // num_frames
+	// Preserve loop counters and caller-saved regs that mixer may clobber
+	stp x8, x9,  [sp, #80]   // save to fixed frame
+	stp x21, x22, [sp, #96]  // save frames_rem & frames_to_process backup
+
 	bl _generator_mix_buffers_asm
+
+    ldp x21, x22, [sp, #96]  // restore counters
+    ldp x8,  x9,  [sp, #80]  // restore caller-saved registers
+    mov w11, w22            // restore frames_to_process after mixer may have clobbered x11
 
 	// ----- SCRATCH RMS PROBE (debug – first slice only) -----
 	.if 0
